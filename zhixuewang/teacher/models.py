@@ -36,14 +36,14 @@ class TeacherRole(Enum):
 
     def __str__(self):
         return self._value_
-
+    
     @staticmethod
     def from_zxw(label: str) -> "TeacherRole":
         if label in ROLE_TABLE:
             return TeacherRole(ROLE_TABLE[label])
         else:
             raise ValueError(f"未知的教师角色: {label}")
-
+    
     def to_zxw(self) -> str:
         for key, value in ROLE_TABLE.items():
             if value == self.value:
@@ -88,7 +88,7 @@ class TeaPerson(Person):
     """城市"""
     district: Optional[Region] = None
     """区县"""
-
+    
     def __str__(self):
         return f"教师: {self.name} ({self.login_name})"
 
@@ -269,23 +269,23 @@ class OriginalPaper:
     answer_details: List[AnswerRecordDetail] = field(default_factory=list)
     """答题详情列表"""
     answer_sheet_images: List[str] = field(default_factory=list)
-
-
+    
+    
     @property
     def objective_questions(self) -> List[AnswerRecordDetail]:
         """获取客观题列表"""
         return [detail for detail in self.answer_details if detail.answer_type == "s01Text"]
-
+    
     @property
     def subjective_questions(self) -> List[AnswerRecordDetail]:
         """获取主观题列表"""
         return [detail for detail in self.answer_details if detail.answer_type == "s02Image"]
-
+    
     @property
     def total_objective_score(self) -> float:
         """获取客观题总分"""
         return sum(detail.score for detail in self.objective_questions)
-
+    
     @property
     def total_subjective_score(self) -> float:
         """获取主观题总分"""
