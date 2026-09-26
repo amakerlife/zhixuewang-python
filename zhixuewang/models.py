@@ -32,19 +32,19 @@ class Account:
 
     def get_session(self):
         return self._session
-    
+
     def to_student(self) -> "StudentAccount":
         raise NotImplementedError("账号无法转换为学生账号")
-    
+
     def to_teacher(self) -> "TeacherAccount":
         raise NotImplementedError("账号无法转换为教师账号")
-    
+
     def to_parent(self) -> "ParentAccount":
         raise NotImplementedError("账号无法转换为家长账号")
-    
+
     def get_personal_messages(
-        self, 
-        page_index: int = 1, 
+        self,
+        page_index: int = 1,
         page_size: int = 10000
     ) -> "PersonalMessageList":
         """获取私信消息列表
@@ -67,20 +67,21 @@ class Account:
             }
         )
         data = r.json()
-        
+
         # 解析消息列表
         messages = []
         pager_messages = data.get("pagerMessages", {})
         for msg_data in pager_messages.get("list", []):
             notify = msg_data.get("notify", {})
-            
+
             # 解析发送者信息
             sender_detail_str = notify.get("senderDetail", "{}")
             try:
-                sender_detail = json.loads(sender_detail_str) if isinstance(sender_detail_str, str) else sender_detail_str
+                sender_detail = json.loads(sender_detail_str) if isinstance(
+                    sender_detail_str, str) else sender_detail_str
             except json.JSONDecodeError:
                 sender_detail = {}
-            
+
             sender = MessageUser(
                 user_id=sender_detail.get("userId", ""),
                 user_name=sender_detail.get("userName", ""),
@@ -91,7 +92,7 @@ class Account:
                 country_id=sender_detail.get("countryId", ""),
                 province_id=sender_detail.get("provinceId", "")
             )
-            
+
             messages.append(PersonalMessage(
                 id=notify.get("id", 0),
                 content=notify.get("content", ""),
@@ -109,7 +110,7 @@ class Account:
                 like_count=notify.get("likeCount", 0),
                 comment_count=notify.get("commentCount", 0)
             ))
-        
+
         # 解析分页信息
         page_info_data = data.get("pageInfo", {})
         page_info = MessagePageInfo(
@@ -123,7 +124,7 @@ class Account:
             prev_page=page_info_data.get("prevPage", 1),
             all_pages=page_info_data.get("allPages", [])
         )
-        
+
         return PersonalMessageList(
             messages=ExtendedList(messages),
             page_info=page_info,
@@ -136,11 +137,11 @@ class Account:
         content: str
     ) -> bool:
         """发送私信消息
-        
+
         Args:
             receiver_id (str): 接收者用户ID
             content (str): 消息内容
-        
+
         Returns:
             bool: 发送是否成功
         """
@@ -154,6 +155,8 @@ class Account:
         )
         data = r.json()
         return data.get("result") == "success"
+
+
 T = TypeVar("T")
 
 
@@ -182,20 +185,19 @@ class ExtendedList(List[T]):
 
     def find_by_name(self, name: str) -> Optional[T]:
         """返回列表里第一个特定名字的元素, 没有则返回None"""
-        return self.find(lambda d: d.name == name) # type: ignore
+        return self.find(lambda d: d.name == name)  # type: ignore
 
     def find_all_by_name(self, name: str) -> "ExtendedList[T]":
         """返回列表里所有特定名字的元素"""
-        return self.find_all(lambda d: d.name == name) # type: ignore
+        return self.find_all(lambda d: d.name == name)  # type: ignore
 
     def find_by_id(self, spec_id: str) -> Optional[T]:
         """返回列表里第一个特定id的元素, 没有则返回None"""
-        return self.find(lambda d: d.id == spec_id) # type: ignore
+        return self.find(lambda d: d.id == spec_id)  # type: ignore
 
     def find_all_by_id(self, spec_id: str) -> "ExtendedList[T]":
         """返回列表里所有特定id的元素"""
-        return self.find_all(lambda d: d.id == spec_id) # type: ignore
-
+        return self.find_all(lambda d: d.id == spec_id)  # type: ignore
 
 
 @dataclass
@@ -206,6 +208,7 @@ class AcademicYear:
     code: str = ""
     begin_time: str = ""
     end_time: str = ""
+
 
 @dataclass
 class Grade:
@@ -313,6 +316,7 @@ class TextBook:
     versionCode: int = 0
     """教科书版本编号"""
     bindSubject: BasicSubject = field(default_factory=BasicSubject)
+
     def __str__(self) -> str:
         return f"{self.bindSubject.name} {self.name} ({self.version})"
 
@@ -325,7 +329,8 @@ class Exam:
     name: str = ""
     status: str = ""
     grade_code: str = ""
-    subjects: ExtendedList[Subject] = field(default_factory=ExtendedList, repr=False)  # type: ignore # 总考试科目(不同班级实际考试科目可能只有部分)
+    # type: ignore # 总考试科目(不同班级实际考试科目可能只有部分)
+    subjects: ExtendedList[Subject] = field(default_factory=ExtendedList, repr=False)
     clazzs: ExtendedList[StuClass] = field(default_factory=ExtendedList, repr=False)  # type: ignore # 参考班级
     schools: ExtendedList[School] = field(default_factory=ExtendedList, repr=False)     # type: ignore # 参考学校
     create_user: Person = field(default_factory=Person, repr=False)
@@ -526,11 +531,11 @@ class PersonalMessage:
     """点赞数"""
     comment_count: int = 0
     """评论数"""
-    
+
     def get_create_datetime(self) -> datetime:
         """获取创建时间的datetime对象"""
         return datetime.fromtimestamp(self.create_time / 1000)
-    
+
     def get_update_datetime(self) -> datetime:
         """获取更新时间的datetime对象"""
         return datetime.fromtimestamp(self.update_time / 1000)
@@ -568,11 +573,11 @@ class PersonalMessageList:
     """分页信息"""
     total_count: int
     """总数"""
-    
+
     def get_unread_messages(self) -> ExtendedList[PersonalMessage]:
         """获取未读消息列表（根据view_count判断）"""
         return self.messages.find_all(lambda m: m.view_count == 0)
-    
+
     def get_messages_by_sender(self, sender_id: str) -> ExtendedList[PersonalMessage]:
         """获取指定发送者的消息列表"""
         return self.messages.find_all(lambda m: m.send_user_id == sender_id)

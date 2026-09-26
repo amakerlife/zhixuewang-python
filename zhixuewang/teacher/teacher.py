@@ -1,7 +1,8 @@
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
+from zhixuewang.exceptions import PageConnectionError
 from zhixuewang.models import (
     Account,
     BasicSubject,
@@ -17,9 +18,13 @@ from zhixuewang.models import (
 from zhixuewang.teacher.models import (
     AcademicInfo,
     AnswerRecordDetail,
+    HomeworkAcademicYear,
+    HomeworkClassReport,
     MarkingProgress,
+    NewHomework,
     OriginalPaper,
     PageExam,
+    PageHomework,
     Phase,
     PhaseSubjectGrade,
     Region,
@@ -29,17 +34,16 @@ from zhixuewang.teacher.models import (
     TeaPerson,
 )
 from zhixuewang.teacher.urls import Url
+from zhixuewang.tools.datetime_tool import cst2timestamp, iso2timestamp
 
 
 class TeacherAccount(Account, TeaPerson):
     """老师账号"""
 
-    
-
     def __init__(self, session):
         super().__init__(session, Role.teacher)
         self._token = None
-        
+
         self.teaching_classes: List[StuClass] = []
         """教学班级列表"""
         self.school: Optional[School] = None
@@ -56,7 +60,7 @@ class TeacherAccount(Account, TeaPerson):
         """学段-学科-年级信息"""
         self.cur_teaching_grades: List[Grade] = []
         """当前教学年级"""
-    
+
     def to_teacher(self) -> "TeacherAccount":
         """将Account转换为TeacherAccount"""
         return self
@@ -72,19 +76,19 @@ class TeacherAccount(Account, TeaPerson):
         if r.status_code != 200:
             return self
         data = r.json()["result"]
-        
+
         # 基本信息
         self.id = data.get("id", "")
         self.login_name = data.get("loginName", "")
         self.name = data.get("name", "")
         self.mobile = data.get("mobile", "")
-        
+
         # 角色信息
         if "roles" in data:
             self.roles = []
             for role_data in data["roles"]:
                 self.roles.append(TeacherRole.from_zxw(role_data["eName"]))
-        
+
         # 地区信息
         if data.get("province"):
             self.province = Region(
@@ -107,32 +111,32 @@ class TeacherAccount(Account, TeaPerson):
                 level=data["distinct"].get("level"),
                 id=data["distinct"].get("id", "")
             )
-        
+
         # 学校信息
         if data.get("school"):
             self.school = School(
                 id=data["school"].get("id", ""),
                 name=data["school"].get("name", "")
             )
-        
+
         # 当前学段
         if data.get("curPhase"):
             self.cur_phase = Phase(
                 code=data["curPhase"].get("code", ""),
                 name=data["curPhase"].get("name", "")
             )
-        
+
         # 当前学科
         if data.get("curSubject"):
             self.cur_subject = BasicSubject(
                 code=data["curSubject"].get("code", ""),
                 name=data["curSubject"].get("name", "")
             )
-        
+
         # 书籍版本
         if data.get("bookVersion"):
             self.book_version = data["bookVersion"].get("name", "")
-        
+
         # 教科书版本
         if data.get("textBookVersion") and self.cur_subject:
             self.textbook_version = TextBook(
@@ -142,7 +146,7 @@ class TeacherAccount(Account, TeaPerson):
                 versionCode=data.get("bookVersion", {}).get("code", 0),
                 bindSubject=self.cur_subject
             )
-        
+
         # 当前教学年级
         if "curTeachingGrades" in data:
             self.cur_teaching_grades = []
@@ -152,7 +156,7 @@ class TeacherAccount(Account, TeaPerson):
                     name=grade_data.get("name")
                 )
                 self.cur_teaching_grades.append(grade)
-                
+
                 # 提取教学班级
                 if "clazzs" in grade_data:
                     for clazz_data in grade_data["clazzs"]:
@@ -164,7 +168,7 @@ class TeacherAccount(Account, TeaPerson):
                                 school=self.school or School()
                             )
                         )
-        
+
         # 学段-学科-年级信息
         if "phaseAndSubjects" in data:
             self.phase_subjects_grades = []
@@ -194,7 +198,7 @@ class TeacherAccount(Account, TeaPerson):
                         grades=grades
                     )
                 )
-        
+
         return self
 
     def set_base_info(self):
@@ -255,7 +259,6 @@ class TeacherAccount(Account, TeaPerson):
             )
         return classes
 
-    
     def get_original_paper(
         self, user_id: str, topic_set_id: str, save_to_path: Optional[str] = None
     ) -> OriginalPaper:
@@ -271,17 +274,17 @@ class TeacherAccount(Account, TeaPerson):
             Url.ORIGINAL_PAPER_URL, params={"userId": user_id, "paperId": topic_set_id}
         )
         html_content = r.text
-        
+
         # 保存HTML文件（如果指定了路径）
         if save_to_path:
             with open(save_to_path, encoding="utf-8", mode="w+") as f:
                 f.writelines(
                     html_content.replace("/api-classreport", "https://www.zhixue.com/api-classreport")
                 )
-        
+
         # 解析原卷数据
         return self._parse_original_paper_html(html_content, user_id, topic_set_id)
-    
+
     def _parse_original_paper_html(self, html_content: str, user_id: str, topic_set_id: str) -> OriginalPaper:
         """解析原卷HTML内容
         Args:
@@ -295,12 +298,12 @@ class TeacherAccount(Account, TeaPerson):
         total_score = 0.0
         answer_details = []
         answer_sheet_images = []
-        
+
         # 提取totalScore
         total_score_match = re.search(r'var totalScore = ([\d.]+);', html_content)
         if total_score_match:
             total_score = float(total_score_match.group(1))
-        
+
         # 提取answerSheetImages
         sheet_images_match = re.search(r'var sheetImages = (\[.*?\]);', html_content, re.DOTALL)
         if sheet_images_match:
@@ -310,18 +313,17 @@ class TeacherAccount(Account, TeaPerson):
             except json.JSONDecodeError:
                 # 如果JSON解析失败，返回空列表
                 answer_sheet_images = []
-        
+
         # 提取sheetDatas（包含userAnswerRecordDTO）
         sheet_datas_match = re.search(r'var sheetDatas = ({.*?});[\s\n]*var sheetImages', html_content, re.DOTALL)
         if sheet_datas_match:
             try:
                 sheet_datas_str = sheet_datas_match.group(1)
                 sheet_datas = json.loads(sheet_datas_str)
-                
+
                 # 解析用户答题记录
                 user_answer_record = sheet_datas.get("userAnswerRecordDTO", {})
-                
-                
+
                 # 解析答题详情
                 for detail_data in user_answer_record.get("answerRecordDetails", []):
                     # 解析小题（主观题）
@@ -340,14 +342,14 @@ class TeacherAccount(Account, TeaPerson):
                                 is_typical_error=marking_record_data.get("isTypicalError", False),
                                 marking_content=marking_record_data.get("markingContent", "")
                             ))
-                        
+
                         sub_topics.append(SubTopicDetail(
                             score=sub_topic_data.get("score", 0.0),
                             sub_topic_index=sub_topic_data.get("subTopicIndex", -1),
                             score_source=sub_topic_data.get("scoreSource", ""),
                             teacher_marking_records=marking_records
                         ))
-                    
+
                     answer_details.append(AnswerRecordDetail(
                         topic_number=detail_data.get("topicNumber", 0),
                         disp_title=detail_data.get("dispTitle", ""),
@@ -366,7 +368,7 @@ class TeacherAccount(Account, TeaPerson):
             except json.JSONDecodeError:
                 # 如果JSON解析失败，返回空数据
                 pass
-        
+
         return OriginalPaper(
             user_id=user_id,
             topic_set_id=topic_set_id,
@@ -398,7 +400,7 @@ class TeacherAccount(Account, TeaPerson):
         """
         获取某个考试的详细情况, 包括考试科目, 参考班级等信息
         注意: 该接口不完全获取到考试科目的满分
-        
+
         Args:
             exam_id (str): 为需要查询考试的id
         Return:
@@ -413,16 +415,18 @@ class TeacherAccount(Account, TeaPerson):
         subject_map: Dict[str, Subject] = {}
         for each in data["classList"]:
             school = School(id=each["schoolId"])
-            subjects = [Subject(id=inner["topicSetId"], name=inner["subjectName"], code=inner["subjectCode"], standard_score=inner.get("standScore", "0.0"), exam_id=exam_id) for inner in each["examSubjectList"]]
+            subjects = [Subject(id=inner["topicSetId"], name=inner["subjectName"], code=inner["subjectCode"], standard_score=inner.get(
+                "standScore", "0.0"), exam_id=exam_id) for inner in each["examSubjectList"]]
             for subject in subjects:
                 if subject.id not in subject_map:
                     subject_map[subject.id] = subject
                 else:
                     if subject.id != subject_map[subject.id].id:
-                        raise ValueError(f"这种情况不应该发生, 请联系开发者，请将下面信息在issue中反馈:\n{ r.text }")
+                        raise ValueError(f"这种情况不应该发生, 请联系开发者，请将下面信息在issue中反馈:\n{r.text}")
             if exam.schools.find_by_id(each["schoolId"]) is None:
                 exam.schools.append(School(id=each["schoolId"]))
-            exam.clazzs.append(StuClass(id=each["classId"], name=each["className"], grade=Grade(code=each["gradeCode"]), school=school))
+            exam.clazzs.append(StuClass(id=each["classId"], name=each["className"],
+                               grade=Grade(code=each["gradeCode"]), school=school))
             exam.grade_code = each["gradeCode"]  # 一般来说同一考试年级代码是一样的
         exam.subjects = ExtendedList(list(subject_map.values()))
         return exam
@@ -471,7 +475,7 @@ class TeacherAccount(Account, TeaPerson):
                     circles_year=str(did),
                     term_id=d["termId"],
                     begin_time=d["beginTime"],
-                    end_time=d["endTime"],  #! 这两个都使用Unix时间戳，单位ms
+                    end_time=d["endTime"],  # ! 这两个都使用Unix时间戳，单位ms
                     school_id=data["schoolId"],
                 )
             )
@@ -571,6 +575,180 @@ class TeacherAccount(Account, TeaPerson):
             page_size=page_size,
             all_pages=data["pageInfo"]["allPages"][-1],
             has_next_page=page_index < data["pageInfo"]["allPages"][-1],
+        )
+
+    def _request_gece(self, method: str, url: str, data: Optional[Dict[str, Any]] = None) -> Any:
+        """
+        请求 gece.zhixue.com 下的接口, token 放在 POST 请求体或 GET 参数中
+        Returns:
+            Any: 响应中的 result 字段
+        """
+        data = {**(data or {}), "token": self.get_token()}
+        r = self._session.request(
+            method,
+            url,
+            json=data if method == "POST" else None,
+            params=data if method == "GET" else None,
+            headers={"Accept-Language": "zh-CN"},
+        )
+        if r.status_code != 200 or r.json().get("errorCode") != 0:
+            raise PageConnectionError(f"请求 {url} 出错 \n {r.text}")
+        return r.json()["result"]
+
+    def get_homework_academic_years(self) -> ExtendedList[HomeworkAcademicYear]:
+        """获取新版作业报告可选的学年学期"""
+        data = self._request_gece("POST", Url.GET_HOMEWORK_ACADEMIC_YEAR_TERM_URL)
+        return ExtendedList([
+            HomeworkAcademicYear(
+                year=each["year"],
+                name=each.get("academicYearName", ""),
+                terms=[term["termName"] for term in each.get("terms") or []],
+            )
+            for each in data.get("academicYearTermList") or []
+        ])
+
+    def get_homework_grades(self, phase_code: str, subject_code: str) -> ExtendedList[Grade]:
+        """
+        获取新版作业报告可选的学段和学科
+        Args:
+            phase_code (str): 学段代码
+            subject_code (str): 学科代码
+        """
+        data = self._request_gece("POST", Url.GET_HOMEWORK_GRADE_LIST_URL, {
+            "schoolId": self.school.id if self.school else "",
+            "phaseCode": phase_code,
+            "subjectCode": subject_code,
+        })
+        return ExtendedList([
+            Grade(code=each["code"], name=each["name"], phase_code=phase_code)
+            for each in data or []
+        ])
+
+    def get_homeworks(
+        self,
+        homework_title: str = "",
+        phase_code: str = "",
+        subject_code: str = "",
+        grade_code: str = "",
+        academic_year: Optional[int] = None,
+        term_name: str = "",
+        page_index: int = 1,
+        page_size: int = 10
+    ) -> PageHomework:
+        """
+        获取已经生成报告的新版作业列表，按报告生成时间倒序
+
+        TODO: 增加排序方式、作业类型、班级筛选的支持
+        Args:
+            homework_title (str): 作业标题
+            phase_code (str): 学段代码
+            subject_code (str): 学科代码
+            grade_code (str): 年级代码，为空表示全部年级
+            academic_year (int): 学年，如 2026
+            term_name (str): 学期名称，如 第一学期
+            page_index (int)
+            page_size (int)
+        Returns:
+            PageHomework: 作业列表和页数信息
+        """
+        school_id = self.school.id if self.school else ""
+        data = self._request_gece("POST", Url.GET_HOMEWORK_LIST_URL, {
+            "title": homework_title,
+            "schoolId": school_id,
+            "phaseCode": phase_code,
+            "subjectCode": subject_code,
+            "gradeCode": grade_code,
+            "academicYear": academic_year,
+            "termName": term_name,
+            "fromSource": "web",
+            "page": page_index, "size": page_size,
+            "orderBy": 2, "order": "desc",  # 2: 报告生成时间
+            "hwTag": "", "hwQueryType": None,
+            "screenClassType": ""
+        })
+        homeworks: ExtendedList[NewHomework] = ExtendedList()
+        for each in data.get("content") or []:
+            school = School(id=school_id)
+            grade = Grade(code=each.get("gradeCode", ""), name=each.get("gradeName", ""))
+            class_reports: ExtendedList[HomeworkClassReport] = ExtendedList()
+            for clazz in each.get("classReportList") or []:
+                try:
+                    score_rate: Optional[float] = float(clazz["scoreRate"])
+                except (TypeError, ValueError):  # 无数据时为 "--"
+                    score_rate = None
+                class_reports.append(
+                    HomeworkClassReport(
+                        clazz=StuClass(id=clazz["classId"], name=clazz["className"], grade=grade, school=school),
+                        total_num=int(clazz.get("totalStuNum") or 0),
+                        submit_num=int(clazz.get("submitNum") or 0),
+                        score_rate=score_rate,
+                        first_scan_time=iso2timestamp(clazz.get("firstScanTime")),
+                    )
+                )
+            homeworks.append(
+                NewHomework(
+                    id=each["homeworkId"],
+                    ist_id=each.get("istId") or "",
+                    title=each.get("title", ""),
+                    teacher_id=each.get("teacherId", ""),
+                    teacher_name=each.get("teacherName", ""),
+                    deploy_time=iso2timestamp(each.get("homeworkDeployTime")) or 0,
+                    create_time=iso2timestamp(each.get("reportCreateTime")) or 0,
+                    school=school,
+                    grade=grade,
+                    subject=BasicSubject(code=each.get("subjectCode", ""), name=each.get("subjectName", "")),
+                    clazzs=ExtendedList([report.clazz for report in class_reports]),
+                    class_reports=class_reports,
+                    status=(each.get("status") or {}).get("name", ""),
+                    hw_tag=each.get("hwInfoTagLevel") or "",
+                    hw_query_type=each.get("hwQueryType") or "",
+                    hw_type=each.get("hwType") or 0,
+                    score_type=each.get("scoreType") or 0,
+                    auth=each.get("auth") or 0,
+                    is_pyj=bool(each.get("isPyj")),
+                    is_aims=bool(each.get("isAims")),
+                    is_third_hw=bool(each.get("isThirdHw")),
+                )
+            )
+        total_count = data.get("totalElements", 0)
+        all_pages = (total_count + page_size - 1) // page_size  # XXX: 原始 totalPages 似乎不可靠
+        return PageHomework(
+            homeworks=homeworks,
+            page_index=page_index,
+            page_size=page_size,
+            total_count=total_count,
+            all_pages=all_pages,
+            has_next_page=page_index < all_pages,
+        )
+
+    def get_homework_detail(self, homework_id: str) -> NewHomework:
+        """
+        获取新版作业的基本信息，包括学校、年级、学科、布置班级等
+        接口不返回各班级统计、教师信息和 score_type 等报告参数
+
+        Args:
+            homework_id (str): 作业 id
+        Returns:
+            NewHomework
+        """
+        data = self._request_gece("POST", Url.GET_HOMEWORK_DETAIL_URL, {"homeworkId": homework_id})
+        school = School(id=data.get("schoolId", ""), name=data.get("schoolName", ""))
+        grade = Grade(code=data.get("gradeCode", ""), name=data.get("gradeName", ""))
+        return NewHomework(
+            id=homework_id,
+            title=data.get("homeworkName", ""),
+            # 时间是北京时间字符串，非 ISO
+            deploy_time=cst2timestamp(data.get("createTime")) or 0,
+            create_time=cst2timestamp(data.get("beginTime")) or 0,
+            school=school,
+            grade=grade,
+            subject=BasicSubject(name=data.get("subjectName", "")),
+            clazzs=ExtendedList([
+                StuClass(id=each["id"], name=each["name"], grade=grade, school=school)
+                for each in data.get("clazzList") or []
+            ]),
+            hw_tag=data.get("hwInfoTagLevel") or "",
+            hw_query_type=data.get("hwQueryType") or "",
         )
 
     def get_token(self) -> str:

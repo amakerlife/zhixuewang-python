@@ -1,5 +1,7 @@
 from zhixuewang.urls import BASE_URL
 
+GECE_URL = "https://gece.zhixue.com"
+
 
 class Url:
     INFO_URL = f"{BASE_URL}/container/container/student/account/"
@@ -25,7 +27,11 @@ class Url:
 
     GET_ADVANCED_INFORMATION_URL = f"{BASE_URL}/paperfresh/api/common/getCurrentUser"
     GET_STUDENT_STATUS_URL = f"{BASE_URL}/api-teacher/home/getStudentStatus"
-    
+
     GET_TOKEN_URL = f"{BASE_URL}/container/app/token/getToken"
-    
-    
+
+    # 新版作业相关 API
+    GET_HOMEWORK_LIST_URL = f"{GECE_URL}/api-platform-report/report/list/teacher"
+    GET_HOMEWORK_ACADEMIC_YEAR_TERM_URL = f"{GECE_URL}/api-school-book/report/list/getAcademicYearTerm"
+    GET_HOMEWORK_GRADE_LIST_URL = f"{GECE_URL}/api-school-book/homework/getBaseGradeList"
+    GET_HOMEWORK_DETAIL_URL = f"{GECE_URL}/api-platform-report/report/head/getHomework"
